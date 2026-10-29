@@ -19,8 +19,8 @@ const SITE_TITLE = "Creator Evidence Kit";
 
 const THUMBNAIL_MAX_DIMENSION = 400;
 const THUMBNAIL_JPEG_QUALITY = 0.6;
-const AHASH_SIMILARITY_THRESHOLD = 8;   // for batch grouping
-const AHASH_DUPLICATE_THRESHOLD = 4;    // tighter threshold for duplicate warning
+const AHASH_SIMILARITY_THRESHOLD = 8;
+const AHASH_DUPLICATE_THRESHOLD = 4;
 
 const LICENSING_LABELS = {
   undecided: "Undecided",
@@ -48,6 +48,8 @@ let evidenceEntries = [];
 
 let batchState = null;
 let batchProcessing = false;
+
+let selectedWorkIds = new Set();
 
 /* ---------- Toast ---------- */
 let toastTimer = null;
@@ -341,7 +343,7 @@ async function readImageMetadata(file) {
         metadata.camera = make && model ? `${make} ${model}`.trim() : (model || make || null);
         metadata.software = tag("Software", 305) || null;
       }
-    } catch (err) { console.warn("EXIF reading failed: - app.js:344", err); }
+    } catch (err) { console.warn("EXIF reading failed: - app.js:346", err); }
   }
   if (!metadata.title) metadata.title = titleFromFilename(file.name);
   return metadata;
@@ -449,9 +451,6 @@ async function processMediaFile(file) {
 }
 
 /* ---------- Duplicate detection ---------- */
-/* Builds the set of SHA-256 hashes and aHashes already known in the collection
-   (excluding the work being edited, so re-adding the same file to a work you
-   are editing is not flagged as a dupe of itself). */
 function buildExistingHashes(options = {}) {
   const excludeWorkId = options.excludeWorkId || null;
   const shas = new Set();
@@ -468,8 +467,6 @@ function buildExistingHashes(options = {}) {
   return { shas, ahashEntries };
 }
 
-/* Builds the set of SHA-256 and aHash values already present in the current
-   in-progress selection (single-work or batch). */
 function buildCurrentSelectionHashes() {
   const shas = new Set();
   const ahashEntries = [];
@@ -488,11 +485,6 @@ function buildCurrentSelectionHashes() {
   return { shas, ahashEntries };
 }
 
-/* Compares each processed file against existing + current selection.
-   Returns { exact: [...], similar: [...] }.
-   - exact: byte-for-byte duplicates (same SHA-256, checked against collection,
-     current selection, and other files in this upload)
-   - similar: perceptual matches that are NOT also exact duplicates */
 function findDuplicatesAndSimilar(processed, options = {}) {
   const existing = buildExistingHashes({ excludeWorkId: options.excludeWorkId });
   const current = buildCurrentSelectionHashes();
@@ -546,8 +538,6 @@ function describeWhere(where) {
   return "";
 }
 
-/* Shows a confirm() with a list of exact dupes. Returns true if user chose to
-   skip them. */
 function confirmSkipExactDuplicates(exact) {
   if (!exact || exact.length === 0) return false;
   const shown = exact.slice(0, 5).map(d =>
@@ -603,11 +593,10 @@ async function handleImageSelection(fileList) {
       const p = await processMediaFile(validFiles[i]);
       processed.push(p);
     } catch (err) {
-      console.warn(`Failed to process ${validFiles[i].name}: - app.js:606`, err);
+      console.warn(`Failed to process ${validFiles[i].name}: - app.js:596`, err);
     }
   }
 
-  // Duplicate check
   const { exact, similar } = findDuplicatesAndSimilar(processed, {
     excludeWorkId: editingWorkId || null
   });
@@ -1374,14 +1363,13 @@ async function handleBatchFileSelection(fileList) {
     try {
       const p = await processMediaFile(validFiles[i]);
       processed.push(p);
-    } catch (err) { console.warn(`Failed to process ${validFiles[i].name}: - app.js:1377`, err); }
+    } catch (err) { console.warn(`Failed to process ${validFiles[i].name}: - app.js:1366`, err); }
   }
   if (progress) progress.hidden = true;
   batchProcessing = false;
 
   if (processed.length === 0) { showToast("No files could be processed."); return; }
 
-  // Duplicate check
   const { exact, similar } = findDuplicatesAndSimilar(processed, { excludeWorkId: null });
 
   if (exact.length > 0) {
@@ -1422,7 +1410,6 @@ async function handleBatchFileSelection(fileList) {
   renderBatchGroups();
 }
 
-/* --- File-level selection within batch --- */
 function setFileSelected(fileId, selected) {
   if (!batchState) return;
   if (!batchState.selectedFileIds) batchState.selectedFileIds = new Set();
@@ -1696,7 +1683,6 @@ function renderBatchGroups() {
       });
       thumbCard.appendChild(removeBtn);
 
-      // Clicking anywhere else on the thumbnail toggles selection.
       thumbCard.addEventListener("click", () => {
         const newChecked = !checkbox.checked;
         checkbox.checked = newChecked;
@@ -1788,6 +1774,201 @@ async function saveBatchWorks() {
       setTimeout(() => card.classList.remove("card-flash"), 1600);
     }
   });
+}
+
+/* ---------- Bulk edit / selection helpers ---------- */
+function updateBulkBar() {
+  const bar = $("collectionBulkBar");
+  if (!bar) return;
+
+  const existingIds = new Set(works.map(w => w.id));
+  for (const id of Array.from(selectedWorkIds)) {
+    if (!existingIds.has(id)) selectedWorkIds.delete(id);
+  }
+
+  const count = selectedWorkIds.size;
+  bar.hidden = count === 0;
+
+  const countEl = $("bulkCount");
+  if (countEl) countEl.textContent = `${count} selected`;
+
+  if (count === 0) {
+    // Reset field values so the next selection starts fresh
+    if ($("bulkCreator")) $("bulkCreator").value = "";
+    if ($("bulkLicensing")) $("bulkLicensing").value = "";
+    if ($("bulkEvidenceCategory")) $("bulkEvidenceCategory").value = "creator_declaration";
+    if ($("bulkEvidenceUrl")) $("bulkEvidenceUrl").value = "";
+    if ($("bulkEvidenceEntity")) $("bulkEvidenceEntity").value = "";
+    if ($("bulkEvidenceNotes")) $("bulkEvidenceNotes").value = "";
+    if ($("bulkApplyBtn")) $("bulkApplyBtn").disabled = true;
+
+    // Collapse the evidence panel to keep the next open compact
+    const details = document.querySelector(".bulk-evidence-details");
+    if (details) details.open = false;
+  } else {
+    updateBulkApplyState();
+  }
+}
+
+function updateSelectAllState() {
+  const el = $("selectAllWorks");
+  if (!el) return;
+  const total = works.length;
+  const selected = works.filter(w => selectedWorkIds.has(w.id)).length;
+  el.checked = total > 0 && selected === total;
+  el.indeterminate = selected > 0 && selected < total;
+  el.disabled = total === 0;
+}
+
+function updateBulkApplyState() {
+  const creatorVal = ($("bulkCreator")?.value || "").trim();
+  const licensingVal = $("bulkLicensing")?.value || "";
+  const btn = $("bulkApplyBtn");
+  if (btn) btn.disabled = !creatorVal && !licensingVal;
+}
+
+function bulkApplyChanges() {
+  if (selectedWorkIds.size === 0) return;
+  const newCreator = ($("bulkCreator")?.value || "").trim();
+  const newLicensing = $("bulkLicensing")?.value || "";
+  if (!newCreator && !newLicensing) {
+    showToast("Type a new creator name or pick a licensing option, then click Apply.");
+    return;
+  }
+
+  const affectedIds = Array.from(selectedWorkIds);
+  const wasEditing = editingWorkId && selectedWorkIds.has(editingWorkId);
+  const count = affectedIds.length;
+  const now = new Date().toISOString();
+
+  works = works.map(w => {
+    if (!selectedWorkIds.has(w.id)) return w;
+    const patch = { updated_at: now };
+    if (newCreator) patch.creator = newCreator;
+    if (newLicensing) patch.licensing = newLicensing;
+    return { ...w, ...patch };
+  });
+
+  if (newCreator) updateDefaultCreator(newCreator);
+
+  if (wasEditing) {
+    if (newCreator) {
+      const creatorInput = $("workCreator");
+      if (creatorInput) creatorInput.value = newCreator;
+    }
+    if (newLicensing) {
+      const licensingSelect = $("workLicensing");
+      if (licensingSelect) licensingSelect.value = newLicensing;
+    }
+  }
+
+  markUnsaved();
+  selectedWorkIds.clear();
+  $("bulkCreator").value = "";
+  $("bulkLicensing").value = "";
+  renderCollection();
+  updateSummaryBar();
+  showToast(`Updated ${count} work${count === 1 ? "" : "s"}.`);
+
+  requestAnimationFrame(() => {
+    for (const id of affectedIds) {
+      const card = document.querySelector(`[data-work-id="${id}"]`);
+      if (!card) continue;
+      card.classList.add("card-flash");
+      setTimeout(() => card.classList.remove("card-flash"), 1600);
+    }
+  });
+}
+
+function bulkAddEvidenceToSelected() {
+  if (selectedWorkIds.size === 0) return;
+
+  const category = $("bulkEvidenceCategory")?.value || "creator_declaration";
+  const sourceUrl = ($("bulkEvidenceUrl")?.value || "").trim();
+  const entity = ($("bulkEvidenceEntity")?.value || "").trim();
+  const notes = ($("bulkEvidenceNotes")?.value || "").trim();
+
+  if (!sourceUrl && !entity && !notes) {
+    showToast("Add at least a URL, entity, or note before adding evidence.");
+    return;
+  }
+  if (sourceUrl && !isValidUrl(sourceUrl)) {
+    showToast("Source URL must start with http:// or https://");
+    return;
+  }
+
+  const affectedIds = Array.from(selectedWorkIds);
+  const count = affectedIds.length;
+  const now = new Date().toISOString();
+  const observedAt = todayLocalIso();
+  const newEntries = [];
+
+  works = works.map(w => {
+    if (!selectedWorkIds.has(w.id)) return w;
+    const entry = {
+      id: generateId("ev"),
+      category,
+      source_url: sourceUrl,
+      observed_at: observedAt,
+      entity,
+      notes
+    };
+    newEntries.push(entry);
+    return {
+      ...w,
+      evidence: [...(w.evidence || []), entry],
+      updated_at: now
+    };
+  });
+
+  // Refresh the form if the currently-edited work was in the selection
+  if (editingWorkId && selectedWorkIds.has(editingWorkId)) {
+    const updated = works.find(w => w.id === editingWorkId);
+    if (updated) {
+      evidenceEntries = (updated.evidence || []).map(e => ({ ...e }));
+      renderEvidenceEntries();
+    }
+  }
+
+  addToEvidenceLibrary(newEntries);
+
+  markUnsaved();
+  $("bulkEvidenceUrl").value = "";
+  $("bulkEvidenceEntity").value = "";
+  $("bulkEvidenceNotes").value = "";
+
+  renderCollection();
+  updateSummaryBar();
+  showToast(`Added evidence to ${count} work${count === 1 ? "" : "s"}.`);
+
+  requestAnimationFrame(() => {
+    for (const id of affectedIds) {
+      const card = document.querySelector(`[data-work-id="${id}"]`);
+      if (!card) continue;
+      card.classList.add("card-flash");
+      setTimeout(() => card.classList.remove("card-flash"), 1600);
+    }
+  });
+}
+
+function bulkDeleteSelected() {
+  if (selectedWorkIds.size === 0) return;
+  const count = selectedWorkIds.size;
+  if (!window.confirm(`Delete ${count} work${count === 1 ? "" : "s"}? This cannot be undone.`)) return;
+
+  const wasEditing = editingWorkId && selectedWorkIds.has(editingWorkId);
+  works = works.filter(w => !selectedWorkIds.has(w.id));
+  if (wasEditing) clearForm();
+  selectedWorkIds.clear();
+  markUnsaved();
+  renderCollection();
+  updateSummaryBar();
+  showToast(`Deleted ${count} work${count === 1 ? "" : "s"}.`);
+}
+
+function bulkClearSelection() {
+  selectedWorkIds.clear();
+  renderCollection();
 }
 
 /* ---------- Form handling ---------- */
@@ -1949,20 +2130,45 @@ function renderCollection() {
   const empty = $("collectionEmpty");
   if (!grid) return;
   grid.replaceChildren();
-  if (works.length === 0) { if (empty) empty.hidden = false; return; }
+
+  if (works.length === 0) {
+    if (empty) empty.hidden = false;
+    updateBulkBar();
+    updateSelectAllState();
+    return;
+  }
   if (empty) empty.hidden = true;
 
   works.forEach(work => {
     const card = document.createElement("article");
     card.className = "collection-card";
+    if (selectedWorkIds.has(work.id)) card.classList.add("selected");
     card.dataset.workId = work.id;
 
     const header = document.createElement("div");
     header.className = "card-header";
+
+    const checkLabel = document.createElement("label");
+    checkLabel.className = "card-select";
+    const checkbox = document.createElement("input");
+    checkbox.type = "checkbox";
+    checkbox.checked = selectedWorkIds.has(work.id);
+    checkbox.setAttribute("aria-label", `Select "${work.title}"`);
+    checkbox.addEventListener("change", () => {
+      if (checkbox.checked) selectedWorkIds.add(work.id);
+      else selectedWorkIds.delete(work.id);
+      card.classList.toggle("selected", checkbox.checked);
+      updateBulkBar();
+      updateSelectAllState();
+    });
+    checkLabel.appendChild(checkbox);
+    header.appendChild(checkLabel);
+
     const title = document.createElement("h3");
     title.className = "card-title";
     title.textContent = work.title;
     header.appendChild(title);
+
     const sampleTag = document.createElement("span");
     sampleTag.className = "card-tag";
     sampleTag.textContent = work.is_sample ? "Example" : "Record";
@@ -2029,6 +2235,7 @@ function renderCollection() {
       if (window.confirm(`Delete "${work.title}"? This cannot be undone.`)) {
         works = works.filter(w => w.id !== work.id);
         if (editingWorkId === work.id) clearForm();
+        selectedWorkIds.delete(work.id);
         markUnsaved();
         renderCollection();
         updateSummaryBar();
@@ -2039,6 +2246,9 @@ function renderCollection() {
     card.appendChild(actions);
     grid.appendChild(card);
   });
+
+  updateBulkBar();
+  updateSelectAllState();
 }
 
 function updateSummaryBar() {
@@ -2224,6 +2434,7 @@ function handleImportFile(file) {
 
       if (mode === "replace") {
         works = payload.works.map(w => ({ ...w }));
+        selectedWorkIds.clear();
       } else {
         const existingIds = new Set(works.map(w => w.id));
         let added = 0, skipped = 0;
@@ -2251,7 +2462,7 @@ function handleImportFile(file) {
       if (statusEl) {
         statusEl.className = "import-status success";
         statusEl.textContent = `Successfully imported ${incomingCount} work${incomingCount === 1 ? "" : "s"} (${mode}). Image previews are shown on each record.` +
-          (detected ? ` Creator pre-filled as "${detected}".` : "");
+          (detected ? ` Creator pre-filled as "${detected}". Use the collection checkboxes to bulk-edit.` : "");
       }
     } catch (err) {
       if (statusEl) { statusEl.className = "import-status error"; statusEl.textContent = `Import failed: ${err.message} Your existing collection is unchanged.`; }
@@ -2307,6 +2518,7 @@ function loadSampleRecords() {
       created_at: now, updated_at: now, is_sample: true
     }
   ];
+  selectedWorkIds.clear();
   markUnsaved();
   clearForm();
   renderCollection();
@@ -2576,6 +2788,37 @@ function initEventListeners() {
     renderBatchGroups();
   });
 
+  // Bulk edit wiring
+  const selectAllWorks = $("selectAllWorks");
+  if (selectAllWorks) {
+    selectAllWorks.addEventListener("change", (e) => {
+      const checked = e.target.checked;
+      selectedWorkIds.clear();
+      if (checked) {
+        works.forEach(w => selectedWorkIds.add(w.id));
+      }
+      renderCollection();
+    });
+  }
+
+  const bulkCreator = $("bulkCreator");
+  if (bulkCreator) bulkCreator.addEventListener("input", updateBulkApplyState);
+
+  const bulkLicensing = $("bulkLicensing");
+  if (bulkLicensing) bulkLicensing.addEventListener("change", updateBulkApplyState);
+
+  const bulkApplyBtn = $("bulkApplyBtn");
+  if (bulkApplyBtn) bulkApplyBtn.addEventListener("click", bulkApplyChanges);
+
+  const bulkDeleteBtn = $("bulkDeleteBtn");
+  if (bulkDeleteBtn) bulkDeleteBtn.addEventListener("click", bulkDeleteSelected);
+
+  const bulkClearBtn = $("bulkClearBtn");
+  if (bulkClearBtn) bulkClearBtn.addEventListener("click", bulkClearSelection);
+
+  const bulkEvidenceAddBtn = $("bulkEvidenceAddBtn");
+  if (bulkEvidenceAddBtn) bulkEvidenceAddBtn.addEventListener("click", bulkAddEvidenceToSelected);
+
   const loadSamplesBtn = $("loadSamplesBtn");
   if (loadSamplesBtn) loadSamplesBtn.addEventListener("click", loadSampleRecords);
 
@@ -2641,7 +2884,7 @@ function start() {
     if (notice) notice.hidden = false;
     if (noticeText) noticeText.textContent = "Note: Fingerprinting is unavailable here (needs HTTPS or localhost). You can still record work details without fingerprints.";
   }
-  if (typeof window.exifr === "undefined - app.js:2644") console.warn("exifr library not loaded. Metadata auto-fill will be limited.");
+  if (typeof window.exifr === "undefined - app.js:2887") console.warn("exifr library not loaded. Metadata auto-fill will be limited.");
 }
 
 start();

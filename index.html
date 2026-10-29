@@ -7,7 +7,7 @@
   <meta name="description" content="A free tool for visual artists, photographers, illustrators, and videographers to document creative work, record licensing preferences, and organize evidence of possible AI training use.">
   <meta name="theme-color" id="metaThemeColor" content="#f4f6f9">
   <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Crect width='100' height='100' rx='20' fill='%23fde047'/%3E%3Cpath d='M30 35h40v8H30zM30 50h40v8H30zM30 65h25v8H30z' fill='%231c1917'/%3E%3C/svg%3E">
-  <link rel="stylesheet" href="styles.css?v=10">
+  <link rel="stylesheet" href="styles.css?v=12">
   <script src="vendor/exifr.js" defer></script>
 </head>
 <body>
@@ -338,9 +338,71 @@
         <aside class="main-col-collection" aria-labelledby="collectionHeading">
           <div class="collection-panel">
             <div class="collection-header">
-              <h2 id="collectionHeading">Your collection</h2>
+              <div class="collection-header-row">
+                <input type="checkbox" id="selectAllWorks" class="collection-select-all" aria-label="Select all works">
+                <h2 id="collectionHeading">Your collection</h2>
+              </div>
               <p class="section-dek">Works you have recorded in this session. Export JSON before closing this tab.</p>
             </div>
+
+            <div class="collection-bulk-bar" id="collectionBulkBar" hidden role="region" aria-label="Bulk edit selected works">
+              <div class="bulk-header-row">
+                <span class="bulk-count" id="bulkCount">0 selected</span>
+              </div>
+
+              <div class="bulk-fields-row">
+                <label class="bulk-field">
+                  <span class="bulk-label">New creator name</span>
+                  <input type="text" id="bulkCreator" maxlength="200" placeholder="Type to change for all">
+                </label>
+                <label class="bulk-field">
+                  <span class="bulk-label">New licensing preference</span>
+                  <select id="bulkLicensing">
+                    <option value="">— Keep current —</option>
+                    <option value="not_available">Not available for AI licensing</option>
+                    <option value="undecided">Undecided</option>
+                    <option value="contact_me">Contact me about AI licensing</option>
+                  </select>
+                </label>
+                <button type="button" class="btn small primary" id="bulkApplyBtn" disabled>Apply</button>
+                <button type="button" class="btn small danger" id="bulkDeleteBtn">Delete selected</button>
+                <button type="button" class="btn small ghost" id="bulkClearBtn">Clear</button>
+              </div>
+
+              <details class="bulk-evidence-details">
+                <summary class="bulk-evidence-summary">+ Add evidence entry to all selected works</summary>
+                <div class="bulk-evidence-panel">
+                  <div class="bulk-evidence-row">
+                    <label class="bulk-field">
+                      <span class="bulk-label">Category</span>
+                      <select id="bulkEvidenceCategory">
+                        <option value="creator_declaration">Creator declaration</option>
+                        <option value="dataset_index_reference">Dataset index reference</option>
+                        <option value="company_acknowledgment">Company acknowledgment</option>
+                        <option value="other_source">Other source</option>
+                      </select>
+                    </label>
+                    <label class="bulk-field">
+                      <span class="bulk-label">Source URL (optional)</span>
+                      <input type="url" id="bulkEvidenceUrl" placeholder="https://…">
+                    </label>
+                    <label class="bulk-field">
+                      <span class="bulk-label">Dataset or company (optional)</span>
+                      <input type="text" id="bulkEvidenceEntity" placeholder="LAION-5B, OpenAI…">
+                    </label>
+                  </div>
+                  <label class="bulk-field bulk-full-width">
+                    <span class="bulk-label">Notes (optional)</span>
+                    <textarea id="bulkEvidenceNotes" rows="2" placeholder="What does this source show?"></textarea>
+                  </label>
+                  <div class="bulk-evidence-actions">
+                    <button type="button" class="btn small primary" id="bulkEvidenceAddBtn">Add evidence to selected works</button>
+                    <span class="bulk-hint">Adds one entry to each selected work.</span>
+                  </div>
+                </div>
+              </details>
+            </div>
+
             <div class="collection-scroll">
               <div id="collectionGrid" class="collection-grid"></div>
               <div id="collectionEmpty" class="empty-state">
@@ -423,6 +485,30 @@
           </p>
           <p>
             Detection is a convenience, not a rule. You always decide what stays.
+          </p>
+        </details>
+
+        <details class="method">
+          <summary>How bulk editing works</summary>
+          <p>
+            Every card in your collection has a checkbox. Select one or more works and a
+            bulk edit toolbar appears. Fill the creator field to change the creator name on
+            every selected work. Pick a licensing preference to change the AI licensing
+            choice on every selected work. You can apply both at once, or just one.
+            Leave a field at its default (blank for creator, "Keep current" for licensing)
+            to leave that field alone.
+          </p>
+          <p>
+            The bulk toolbar also has a collapsible section for adding an evidence entry to
+            every selected work at once. This is useful when you have a portfolio page or a
+            dataset index that mentions several of your works. Fill in the category, and any
+            of the URL, entity, or notes fields, then click Add evidence to selected works.
+            Each selected work gets its own copy of the entry.
+          </p>
+          <p>
+            The bulk toolbar also has a delete option for removing multiple works at once, and
+            a "select all" checkbox next to the collection title to select everything currently
+            in the collection.
           </p>
         </details>
 
@@ -530,6 +616,6 @@
 
   <div id="printReport" class="print-report" aria-hidden="true"></div>
 
-  <script src="app.js?v=10"></script>
+  <script src="app.js?v=12"></script>
 </body>
 </html>

@@ -85,6 +85,7 @@ textarea,
 .toolbar-btn,
 .batch-group,
 .batch-actions-bar,
+.collection-bulk-bar,
 .share-menu {
   transition: background-color 0.22s ease, border-color 0.22s ease, color 0.22s ease;
 }
@@ -306,6 +307,7 @@ html[data-theme="dark"] .opt-light { color: var(--muted); opacity: 0.5; }
 .btn.small { font-size: 0.78rem; padding: 0.45rem 0.75rem 0.4rem; }
 .btn.danger { color: var(--warn); border-color: var(--warn); }
 .btn.danger:hover { background: color-mix(in srgb, var(--warn) 10%, transparent); }
+.btn:disabled { opacity: 0.5; cursor: not-allowed; }
 
 .btn.tip {
   color: var(--warn);
@@ -590,14 +592,108 @@ a:focus-visible,
   border-bottom: 1px solid var(--hair);
 }
 
-.collection-header h2 {
+.collection-header-row {
+  display: flex;
+  align-items: center;
+  gap: 0.55rem;
+  margin-bottom: 0.3rem;
+}
+
+.collection-header-row h2 {
   font-size: 1.15rem;
-  margin: 0 0 0.3rem;
+  margin: 0;
+  line-height: 1.2;
+}
+
+.collection-select-all {
+  width: 18px;
+  height: 18px;
+  min-height: 18px;
+  max-width: 18px;
+  flex: none;
+  margin: 0;
+  padding: 0;
+  accent-color: var(--accent);
+  cursor: pointer;
+}
+
+.collection-select-all:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
 }
 
 .collection-header .section-dek {
   margin: 0;
   font-size: 0.82rem;
+}
+
+/* ---------- Bulk edit bar in collection ---------- */
+.collection-bulk-bar {
+  flex: none;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.6rem 0.75rem;
+  background: var(--accent-soft);
+  border-bottom: 1px solid var(--accent);
+  box-shadow: inset 0 -1px 0 0 color-mix(in srgb, var(--accent) 30%, transparent);
+}
+
+.collection-bulk-bar[hidden] { display: none; }
+
+.bulk-count {
+  font-size: 0.78rem;
+  font-weight: 700;
+  color: var(--accent);
+  white-space: nowrap;
+  flex: none;
+}
+
+.bulk-field {
+  flex: 1 1 130px;
+  min-width: 0;
+}
+
+.bulk-field input,
+.bulk-field select {
+  font: 500 0.8rem/1.2 var(--f-display);
+  padding: 0.4rem 0.55rem;
+  min-height: 34px;
+  border-radius: 4px;
+  border: 1px solid var(--hair);
+  background: var(--land);
+  color: var(--ink);
+  width: 100%;
+  text-transform: none;
+  letter-spacing: 0;
+}
+
+.bulk-field input:focus,
+.bulk-field select:focus {
+  border-color: var(--accent);
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+
+.collection-bulk-bar .btn {
+  min-height: 34px;
+  padding: 0.35rem 0.7rem 0.3rem;
+  font-size: 0.78rem;
+  flex: none;
+}
+
+@media (max-width: 500px) {
+  .collection-bulk-bar {
+    flex-direction: column;
+    align-items: stretch;
+  }
+  .bulk-field {
+    flex: 1 1 auto;
+  }
+  .collection-bulk-bar .btn {
+    width: 100%;
+  }
 }
 
 .collection-scroll {
@@ -680,7 +776,6 @@ form { margin: 0 0 0.6rem; }
 
 .controls button { margin: 0; }
 
-/* Labels stretch to fill the row. No max-width cap so fields use the full card width. */
 label {
   display: flex;
   flex-direction: column;
@@ -911,7 +1006,6 @@ select[aria-invalid="true"] { border-color: var(--warn); }
 }
 .batch-header h2 { margin: 0; }
 
-/* File selection toolbar - sticky at top of viewport when scrolling */
 .batch-actions-bar {
   position: sticky;
   top: 0;
@@ -1304,6 +1398,11 @@ select[aria-invalid="true"] { border-color: var(--warn); }
   transition: border-color 0.2s ease, box-shadow 0.2s ease;
 }
 
+.collection-card.selected {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent) 30%, transparent);
+}
+
 .collection-card.card-flash {
   animation: cardFlash 1.5s ease-in-out;
 }
@@ -1311,6 +1410,36 @@ select[aria-invalid="true"] { border-color: var(--warn); }
 @keyframes cardFlash {
   0%, 100% { background-color: var(--land); }
   40% { background-color: color-mix(in srgb, var(--good) 14%, var(--land)); }
+}
+
+.card-select {
+  display: inline-flex !important;
+  flex-direction: row !important;
+  align-items: center;
+  justify-content: center;
+  flex: none !important;
+  min-width: 0;
+  max-width: none;
+  padding: 0;
+  margin: 0;
+  text-transform: none;
+  letter-spacing: normal;
+  font-size: inherit;
+  font-weight: normal;
+  color: inherit;
+  cursor: pointer;
+}
+
+.card-select input[type="checkbox"] {
+  width: 18px;
+  height: 18px;
+  min-height: 18px;
+  max-width: 18px;
+  margin: 0;
+  padding: 0;
+  flex: none;
+  accent-color: var(--accent);
+  cursor: pointer;
 }
 
 .collection-card .card-preview {
@@ -1336,6 +1465,8 @@ select[aria-invalid="true"] { border-color: var(--warn); }
   color: var(--ink);
   overflow-wrap: anywhere;
   word-break: break-word;
+  flex: 1;
+  min-width: 0;
 }
 
 .collection-card .card-creator {
@@ -1362,6 +1493,7 @@ select[aria-invalid="true"] { border-color: var(--warn); }
   background: var(--accent-soft);
   color: var(--accent);
   white-space: nowrap;
+  flex: none;
 }
 
 .card-tag.evidence { background: var(--good-bg); color: var(--good); }
