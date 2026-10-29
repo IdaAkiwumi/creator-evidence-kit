@@ -11,7 +11,7 @@
 
 **Live app:** https://idaakiwumi.github.io/creator-evidence-kit/
 
-A free, local record keeper for visual artists, photographers, illustrators, and videographers. Document creative work, record AI licensing preferences, and organize evidence of possible AI training use. Batch uploads, duplicate detection, and bulk edit are built in. Everything runs in your browser and nothing is uploaded.
+A free, local record keeper for writers, visual artists, photographers, illustrators, and videographers. Document creative work, record AI licensing preferences, and organize evidence of possible AI training use. Batch uploads, duplicate detection, and bulk edit are built in. Everything runs in your browser and nothing is uploaded.
 
 ---
 
