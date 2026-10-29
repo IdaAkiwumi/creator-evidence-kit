@@ -19,7 +19,8 @@ const SITE_TITLE = "Creator Evidence Kit";
 
 const THUMBNAIL_MAX_DIMENSION = 400;
 const THUMBNAIL_JPEG_QUALITY = 0.6;
-const AHASH_SIMILARITY_THRESHOLD = 8;
+const AHASH_SIMILARITY_THRESHOLD = 8;   // for batch grouping
+const AHASH_DUPLICATE_THRESHOLD = 4;    // tighter threshold for duplicate warning
 
 const LICENSING_LABELS = {
   undecided: "Undecided",
@@ -158,6 +159,16 @@ function titleFromFilename(filename) {
     .trim();
 }
 
+function sanitizeForFilename(str) {
+  return String(str || "").trim()
+    .normalize("NFKD")
+    .replace(/[^\w\s-]/g, "")
+    .replace(/\s+/g, "-")
+    .replace(/-+/g, "-")
+    .replace(/^-+|-+$/g, "")
+    .slice(0, 50);
+}
+
 function exifDateToIso(exifDate) {
   if (!exifDate || typeof exifDate !== "string") return "";
   const match = exifDate.match(/^(\d{4}):(\d{2}):(\d{2})/);
@@ -189,6 +200,18 @@ function detectDefaultCreatorFromWorks(list) {
     if (n > bestCount) { best = c; bestCount = n; }
   }
   return best;
+}
+
+function buildExportFilename(ext) {
+  const dateStr = new Date().toISOString().slice(0, 10);
+  const creator = sanitizeForFilename(
+    defaultCreator ||
+    (works[0] && works[0].creator) ||
+    ""
+  );
+  const base = "creator-evidence-kit";
+  if (creator) return `${base}-${creator}-${dateStr}.${ext}`;
+  return `${base}-${dateStr}.${ext}`;
 }
 
 /* ---------- SHA-256 ---------- */
@@ -318,7 +341,7 @@ async function readImageMetadata(file) {
         metadata.camera = make && model ? `${make} ${model}`.trim() : (model || make || null);
         metadata.software = tag("Software", 305) || null;
       }
-    } catch (err) { console.warn("EXIF reading failed: - app.js:321", err); }
+    } catch (err) { console.warn("EXIF reading failed: - app.js:344", err); }
   }
   if (!metadata.title) metadata.title = titleFromFilename(file.name);
   return metadata;
@@ -406,6 +429,7 @@ async function processMediaFile(file) {
   }
 
   return {
+    id: generateId("mf"),
     file,
     meta: {
       filename: file.name,
@@ -422,6 +446,132 @@ async function processMediaFile(file) {
     isVideo,
     isPrimary: false
   };
+}
+
+/* ---------- Duplicate detection ---------- */
+/* Builds the set of SHA-256 hashes and aHashes already known in the collection
+   (excluding the work being edited, so re-adding the same file to a work you
+   are editing is not flagged as a dupe of itself). */
+function buildExistingHashes(options = {}) {
+  const excludeWorkId = options.excludeWorkId || null;
+  const shas = new Set();
+  const ahashEntries = [];
+  for (const w of works) {
+    if (excludeWorkId && w.id === excludeWorkId) continue;
+    for (const img of (w.images || [])) {
+      if (img.sha256) shas.add(img.sha256);
+      if (img.ahash) {
+        ahashEntries.push({ ahash: img.ahash, filename: img.filename || "", workTitle: w.title || "" });
+      }
+    }
+  }
+  return { shas, ahashEntries };
+}
+
+/* Builds the set of SHA-256 and aHash values already present in the current
+   in-progress selection (single-work or batch). */
+function buildCurrentSelectionHashes() {
+  const shas = new Set();
+  const ahashEntries = [];
+  for (const img of selectedImages) {
+    if (img.meta && img.meta.sha256) shas.add(img.meta.sha256);
+    if (img.aHash) ahashEntries.push({ ahash: img.aHash, filename: img.meta?.filename || "" });
+  }
+  if (batchState) {
+    for (const g of batchState.groups) {
+      for (const f of g.files) {
+        if (f.meta && f.meta.sha256) shas.add(f.meta.sha256);
+        if (f.aHash) ahashEntries.push({ ahash: f.aHash, filename: f.meta?.filename || "" });
+      }
+    }
+  }
+  return { shas, ahashEntries };
+}
+
+/* Compares each processed file against existing + current selection.
+   Returns { exact: [...], similar: [...] }.
+   - exact: byte-for-byte duplicates (same SHA-256, checked against collection,
+     current selection, and other files in this upload)
+   - similar: perceptual matches that are NOT also exact duplicates */
+function findDuplicatesAndSimilar(processed, options = {}) {
+  const existing = buildExistingHashes({ excludeWorkId: options.excludeWorkId });
+  const current = buildCurrentSelectionHashes();
+
+  const exact = [];
+  const similar = [];
+  const seenInUpload = new Set();
+
+  for (const p of processed) {
+    if (!p.meta || !p.meta.sha256) continue;
+
+    if (existing.shas.has(p.meta.sha256)) {
+      exact.push({ file: p, where: "collection" });
+      continue;
+    }
+    if (current.shas.has(p.meta.sha256)) {
+      exact.push({ file: p, where: "selection" });
+      continue;
+    }
+    if (seenInUpload.has(p.meta.sha256)) {
+      exact.push({ file: p, where: "upload" });
+      continue;
+    }
+    seenInUpload.add(p.meta.sha256);
+
+    if (p.aHash) {
+      let matched = false;
+      for (const entry of existing.ahashEntries) {
+        if (hammingDistance(p.aHash, entry.ahash) <= AHASH_DUPLICATE_THRESHOLD) {
+          similar.push({ file: p, match: entry, where: "collection" });
+          matched = true;
+          break;
+        }
+      }
+      if (matched) continue;
+      for (const entry of current.ahashEntries) {
+        if (hammingDistance(p.aHash, entry.ahash) <= AHASH_DUPLICATE_THRESHOLD) {
+          similar.push({ file: p, match: entry, where: "selection" });
+          break;
+        }
+      }
+    }
+  }
+  return { exact, similar };
+}
+
+function describeWhere(where) {
+  if (where === "collection") return "already in your collection";
+  if (where === "selection") return "already selected";
+  if (where === "upload") return "duplicate in this upload";
+  return "";
+}
+
+/* Shows a confirm() with a list of exact dupes. Returns true if user chose to
+   skip them. */
+function confirmSkipExactDuplicates(exact) {
+  if (!exact || exact.length === 0) return false;
+  const shown = exact.slice(0, 5).map(d =>
+    `  • ${d.file.meta.filename} (${describeWhere(d.where)})`
+  ).join("\n");
+  const more = exact.length > 5 ? `\n  …and ${exact.length - 5} more` : "";
+  const message =
+    `${exact.length} file${exact.length === 1 ? "" : "s"} appear to already exist:\n\n` +
+    `${shown}${more}\n\n` +
+    `Click OK to skip ${exact.length === 1 ? "it" : "them"}.\n` +
+    `Click Cancel to include ${exact.length === 1 ? "it" : "them"} anyway.`;
+  return window.confirm(message);
+}
+
+function notifySimilar(similar) {
+  if (!similar || similar.length === 0) return;
+  const count = similar.length;
+  const firstName = similar[0].file.meta.filename;
+  const firstMatch = similar[0].match?.filename || "";
+  if (count === 1) {
+    showToast(`"${firstName}" looks visually similar to ${firstMatch ? `"${firstMatch}"` : "an existing file"}. Review before saving.`);
+  } else {
+    showToast(`${count} files look visually similar to existing records. Review before saving.`);
+  }
 }
 
 /* ---------- Single-work selection ---------- */
@@ -445,20 +595,37 @@ async function handleImageSelection(fileList) {
   if (notice) notice.hidden = false;
 
   existingImagesCleared = false;
-  selectedImages = [];
+  let processed = [];
 
   for (let i = 0; i < validFiles.length; i++) {
     if (noticeText) noticeText.textContent = `Processing file ${i + 1} of ${validFiles.length}…`;
     try {
-      const processed = await processMediaFile(validFiles[i]);
-      processed.isPrimary = i === 0;
-      selectedImages.push(processed);
+      const p = await processMediaFile(validFiles[i]);
+      processed.push(p);
     } catch (err) {
-      console.warn(`Failed to process ${validFiles[i].name}: - app.js:457`, err);
+      console.warn(`Failed to process ${validFiles[i].name}: - app.js:606`, err);
     }
   }
 
+  // Duplicate check
+  const { exact, similar } = findDuplicatesAndSimilar(processed, {
+    excludeWorkId: editingWorkId || null
+  });
+
+  if (exact.length > 0) {
+    const skip = confirmSkipExactDuplicates(exact);
+    if (skip) {
+      processed = processed.filter(p => !exact.some(d => d.file === p));
+      showToast(`${exact.length} duplicate${exact.length === 1 ? "" : "s"} skipped.`);
+    }
+  }
+
+  if (similar.length > 0) notifySimilar(similar);
+
+  processed.forEach((p, i) => { p.isPrimary = i === 0; });
+  selectedImages = processed;
   primaryImageIndex = 0;
+
   const existingWrap = $("existingImagesWrap");
   if (existingWrap) existingWrap.hidden = true;
 
@@ -468,13 +635,19 @@ async function handleImageSelection(fileList) {
   const filledFields = getAutoFilledFields();
   const hasVideoOnly = selectedImages.length > 0 && selectedImages.every(img => img.isVideo);
   if (noticeText) {
-    if (filledFields.length > 0) noticeText.textContent = `Auto-filled from image metadata: ${filledFields.join(", ")}. Review and adjust as needed.`;
-    else if (hasVideoOnly) noticeText.textContent = `Videos are attached with a fingerprint. Fill in the work details manually.`;
-    else noticeText.textContent = `No metadata found in your images. Fill in the fields manually.`;
+    if (selectedImages.length === 0) {
+      noticeText.textContent = "No files to add after duplicate check.";
+    } else if (filledFields.length > 0) {
+      noticeText.textContent = `Auto-filled from image metadata: ${filledFields.join(", ")}. Review and adjust as needed.`;
+    } else if (hasVideoOnly) {
+      noticeText.textContent = `Videos are attached with a fingerprint. Fill in the work details manually.`;
+    } else {
+      noticeText.textContent = `No metadata found in your images. Fill in the fields manually.`;
+    }
   }
 
   markUnsaved();
-  showToast(`${validFiles.length} file${validFiles.length === 1 ? "" : "s"} processed`);
+  if (selectedImages.length > 0) showToast(`${selectedImages.length} file${selectedImages.length === 1 ? "" : "s"} added`);
 }
 
 function getAutoFilledFields() {
@@ -1156,9 +1329,11 @@ function enterBatchMode() {
   if (batchActions) batchActions.hidden = true;
   const batchMergeAll = $("batchMergeAllBtn");
   if (batchMergeAll) batchMergeAll.hidden = true;
+  const batchActionsBar = $("batchActionsBar");
+  if (batchActionsBar) batchActionsBar.hidden = true;
   const batchGroups = $("batchGroups");
   if (batchGroups) batchGroups.replaceChildren();
-  batchState = { groups: [] };
+  batchState = { groups: [], selectedFileIds: new Set() };
   requestAnimationFrame(() => { if (batchImages) batchImages.focus(); });
 }
 
@@ -1193,21 +1368,40 @@ async function handleBatchFileSelection(fileList) {
   const progressText = $("batchProgressText");
   if (progress) progress.hidden = false;
 
-  const processed = [];
+  let processed = [];
   for (let i = 0; i < validFiles.length; i++) {
     if (progressText) progressText.textContent = `Processing file ${i + 1} of ${validFiles.length}…`;
     try {
       const p = await processMediaFile(validFiles[i]);
       processed.push(p);
-    } catch (err) { console.warn(`Failed to process ${validFiles[i].name}: - app.js:1202`, err); }
+    } catch (err) { console.warn(`Failed to process ${validFiles[i].name}: - app.js:1377`, err); }
   }
   if (progress) progress.hidden = true;
   batchProcessing = false;
 
   if (processed.length === 0) { showToast("No files could be processed."); return; }
 
+  // Duplicate check
+  const { exact, similar } = findDuplicatesAndSimilar(processed, { excludeWorkId: null });
+
+  if (exact.length > 0) {
+    const skip = confirmSkipExactDuplicates(exact);
+    if (skip) {
+      processed = processed.filter(p => !exact.some(d => d.file === p));
+      showToast(`${exact.length} duplicate${exact.length === 1 ? "" : "s"} skipped.`);
+    }
+  }
+
+  if (similar.length > 0) notifySimilar(similar);
+
+  if (processed.length === 0) {
+    showToast("All selected files were duplicates. Nothing new to add.");
+    return;
+  }
+
   const newGroups = groupBatchFiles(processed);
-  if (!batchState) batchState = { groups: [] };
+  if (!batchState) batchState = { groups: [], selectedFileIds: new Set() };
+  if (!batchState.selectedFileIds) batchState.selectedFileIds = new Set();
   for (const g of newGroups) {
     batchState.groups.push({
       id: generateId("bg"),
@@ -1228,6 +1422,137 @@ async function handleBatchFileSelection(fileList) {
   renderBatchGroups();
 }
 
+/* --- File-level selection within batch --- */
+function setFileSelected(fileId, selected) {
+  if (!batchState) return;
+  if (!batchState.selectedFileIds) batchState.selectedFileIds = new Set();
+  if (selected) batchState.selectedFileIds.add(fileId);
+  else batchState.selectedFileIds.delete(fileId);
+  const checkbox = document.querySelector(`.batch-thumb-check[data-file-id="${CSS.escape(fileId)}"]`);
+  if (checkbox) {
+    const card = checkbox.closest(".batch-thumb");
+    if (card) card.classList.toggle("selected", selected);
+  }
+  updateBatchActionsBar();
+}
+
+function countSelectedFiles() {
+  if (!batchState || !batchState.selectedFileIds) return 0;
+  const existing = new Set();
+  for (const g of batchState.groups) for (const f of g.files) existing.add(f.id);
+  let n = 0;
+  for (const id of batchState.selectedFileIds) if (existing.has(id)) n++;
+  return n;
+}
+
+function updateBatchActionsBar() {
+  const bar = $("batchActionsBar");
+  if (!bar) return;
+  const count = countSelectedFiles();
+  bar.hidden = count === 0;
+  if (count === 0) return;
+
+  const countEl = $("batchSelCount");
+  if (countEl) countEl.textContent = `${count} file${count === 1 ? "" : "s"} selected`;
+
+  const dropdown = $("batchMoveInto");
+  if (dropdown) {
+    const current = dropdown.value;
+    dropdown.innerHTML = '<option value="">Move into…</option>';
+    batchState.groups.forEach((g, idx) => {
+      const opt = document.createElement("option");
+      opt.value = g.id;
+      opt.textContent = `Work ${idx + 1} — ${g.title || "Untitled"}`;
+      dropdown.appendChild(opt);
+    });
+    if (current && Array.from(dropdown.options).some(o => o.value === current)) {
+      dropdown.value = current;
+    }
+  }
+}
+
+function extractSelectedToNewGroup() {
+  if (!batchState) return;
+  const ids = batchState.selectedFileIds;
+  const count = countSelectedFiles();
+  if (!count || !ids) return;
+
+  const extracted = [];
+  for (const g of batchState.groups) {
+    g.files = g.files.filter(f => {
+      if (ids.has(f.id)) { extracted.push(f); return false; }
+      return true;
+    });
+  }
+  batchState.groups = batchState.groups.filter(g => g.files.length > 0);
+
+  if (extracted.length > 0) {
+    batchState.groups.push({
+      id: generateId("bg"),
+      title: suggestGroupTitle(extracted),
+      files: extracted
+    });
+  }
+  ids.clear();
+  renderBatchGroups();
+  showToast(`Moved ${extracted.length} file${extracted.length === 1 ? "" : "s"} to a new work.`);
+}
+
+function moveSelectedInto(groupId) {
+  if (!batchState || !groupId) return;
+  const ids = batchState.selectedFileIds;
+  const count = countSelectedFiles();
+  if (!count || !ids) return;
+  const target = batchState.groups.find(g => g.id === groupId);
+  if (!target) return;
+
+  const moved = [];
+  for (const g of batchState.groups) {
+    if (g === target) continue;
+    g.files = g.files.filter(f => {
+      if (ids.has(f.id)) { moved.push(f); return false; }
+      return true;
+    });
+  }
+  target.files.push(...moved);
+  batchState.groups = batchState.groups.filter(g => g.files.length > 0);
+
+  const previousTitle = target.title;
+  if (!target.title || target.title === "Untitled") {
+    target.title = suggestGroupTitle(target.files);
+  }
+
+  ids.clear();
+  renderBatchGroups();
+  if (moved.length > 0) {
+    showToast(`Moved ${moved.length} file${moved.length === 1 ? "" : "s"} into "${previousTitle || target.title}".`);
+  }
+}
+
+function removeSelectedFiles() {
+  if (!batchState) return;
+  const ids = batchState.selectedFileIds;
+  const count = countSelectedFiles();
+  if (!count || !ids) return;
+  if (!window.confirm(`Remove ${count} file${count === 1 ? "" : "s"} from this batch? They will not be saved.`)) return;
+
+  let removed = 0;
+  for (const g of batchState.groups) {
+    g.files = g.files.filter(f => {
+      if (ids.has(f.id)) {
+        if (f.objectUrl) URL.revokeObjectURL(f.objectUrl);
+        removed++;
+        return false;
+      }
+      return true;
+    });
+  }
+  batchState.groups = batchState.groups.filter(g => g.files.length > 0);
+  ids.clear();
+  renderBatchGroups();
+  showToast(`Removed ${removed} file${removed === 1 ? "" : "s"}.`);
+}
+
 function renderBatchGroups() {
   const container = $("batchGroups");
   if (!container) return;
@@ -1237,6 +1562,7 @@ function renderBatchGroups() {
   if (groups.length === 0) {
     const saveBtn = $("batchSaveBtn");
     if (saveBtn) { saveBtn.textContent = "Save 0 works"; saveBtn.disabled = true; }
+    updateBatchActionsBar();
     return;
   }
 
@@ -1282,23 +1608,40 @@ function renderBatchGroups() {
       actions.appendChild(splitBtn);
     }
 
-    if (gIdx < groups.length - 1) {
-      const mergeBtn = document.createElement("button");
-      mergeBtn.type = "button";
-      mergeBtn.className = "btn ghost small";
-      mergeBtn.textContent = "Merge with next";
-      mergeBtn.addEventListener("click", () => {
-        const next = batchState.groups[gIdx + 1];
-        if (!next) return;
-        const originalLength = group.files.length;
-        group.files.push(...next.files);
-        batchState.groups.splice(gIdx + 1, 1);
-        if (!group.title || group.title === suggestGroupTitle(group.files.slice(0, originalLength))) {
-          group.title = suggestGroupTitle(group.files);
+    if (groups.length > 1) {
+      const mergeLabel = document.createElement("label");
+      mergeLabel.className = "batch-merge";
+      const mergeSpan = document.createElement("span");
+      mergeSpan.textContent = "Merge into";
+      const mergeSelect = document.createElement("select");
+      const blank = document.createElement("option");
+      blank.value = "";
+      blank.textContent = "—";
+      mergeSelect.appendChild(blank);
+      groups.forEach((_, otherIdx) => {
+        if (otherIdx === gIdx) return;
+        const opt = document.createElement("option");
+        opt.value = String(otherIdx);
+        opt.textContent = `Work ${otherIdx + 1}`;
+        mergeSelect.appendChild(opt);
+      });
+      mergeSelect.addEventListener("change", () => {
+        const targetIdx = parseInt(mergeSelect.value, 10);
+        if (isNaN(targetIdx) || targetIdx === gIdx) return;
+        const target = batchState.groups[targetIdx];
+        if (!target) return;
+        const suggestedBefore = suggestGroupTitle(group.files);
+        target.files.push(...group.files);
+        batchState.groups.splice(gIdx, 1);
+        if (!target.title || target.title === suggestedBefore || target.title === "Untitled") {
+          target.title = suggestGroupTitle(target.files);
         }
         renderBatchGroups();
+        showToast(`Merged into Work ${targetIdx + 1}.`);
       });
-      actions.appendChild(mergeBtn);
+      mergeLabel.appendChild(mergeSpan);
+      mergeLabel.appendChild(mergeSelect);
+      actions.appendChild(mergeLabel);
     }
 
     header.appendChild(actions);
@@ -1310,12 +1653,27 @@ function renderBatchGroups() {
     group.files.forEach((file, fIdx) => {
       const thumbCard = document.createElement("div");
       thumbCard.className = "batch-thumb";
+      if (batchState.selectedFileIds && batchState.selectedFileIds.has(file.id)) {
+        thumbCard.classList.add("selected");
+      }
 
       const thumbImg = document.createElement("img");
       thumbImg.src = file.objectUrl || file.thumbnail || file.thumbnailDataUrl || "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Crect width='100' height='100' fill='%23d4d9e2'/%3E%3C/svg%3E";
       thumbImg.alt = file.meta.filename;
       thumbImg.loading = "lazy";
       thumbCard.appendChild(thumbImg);
+
+      const checkbox = document.createElement("input");
+      checkbox.type = "checkbox";
+      checkbox.className = "batch-thumb-check";
+      checkbox.dataset.fileId = file.id;
+      checkbox.checked = !!(batchState.selectedFileIds && batchState.selectedFileIds.has(file.id));
+      checkbox.setAttribute("aria-label", `Select ${file.meta.filename}`);
+      checkbox.addEventListener("click", (e) => e.stopPropagation());
+      checkbox.addEventListener("change", () => {
+        setFileSelected(file.id, checkbox.checked);
+      });
+      thumbCard.appendChild(checkbox);
 
       const nameEl = document.createElement("span");
       nameEl.className = "batch-thumb-name";
@@ -1328,13 +1686,23 @@ function renderBatchGroups() {
       removeBtn.className = "batch-thumb-remove";
       removeBtn.setAttribute("aria-label", `Remove ${file.meta.filename}`);
       removeBtn.textContent = "×";
-      removeBtn.addEventListener("click", () => {
+      removeBtn.addEventListener("click", (e) => {
+        e.stopPropagation();
         if (file.objectUrl) URL.revokeObjectURL(file.objectUrl);
+        if (batchState.selectedFileIds) batchState.selectedFileIds.delete(file.id);
         group.files.splice(fIdx, 1);
         if (group.files.length === 0) batchState.groups.splice(gIdx, 1);
         renderBatchGroups();
       });
       thumbCard.appendChild(removeBtn);
+
+      // Clicking anywhere else on the thumbnail toggles selection.
+      thumbCard.addEventListener("click", () => {
+        const newChecked = !checkbox.checked;
+        checkbox.checked = newChecked;
+        setFileSelected(file.id, newChecked);
+      });
+
       thumbs.appendChild(thumbCard);
     });
 
@@ -1342,6 +1710,7 @@ function renderBatchGroups() {
     container.appendChild(card);
   });
 
+  updateBatchActionsBar();
   updateBatchSaveState();
 }
 
@@ -1377,7 +1746,8 @@ async function saveBatchWorks() {
     const imagesForRecord = files.map((img, index) => ({
       ...img.meta,
       is_primary: index === 0,
-      thumbnail_data_url: img.thumbnailDataUrl || img.thumbnail || null
+      thumbnail_data_url: img.thumbnailDataUrl || img.thumbnail || null,
+      ahash: img.aHash || null
     }));
     const title = (group.title || suggestGroupTitle(files)).trim() || "Untitled";
     const newWork = {
@@ -1513,7 +1883,8 @@ function handleFormSubmit(event) {
     imagesForRecord = selectedImages.map((img, index) => ({
       ...img.meta,
       is_primary: index === primaryImageIndex,
-      thumbnail_data_url: img.thumbnailDataUrl || img.thumbnail || null
+      thumbnail_data_url: img.thumbnailDataUrl || img.thumbnail || null,
+      ahash: img.aHash || null
     }));
   } else if (editingWorkId) {
     const existing = works.find(w => w.id === editingWorkId);
@@ -1702,10 +2073,10 @@ function exportJson() {
   if (works.length === 0) { showToast("Nothing to export yet."); return; }
   const payload = buildExportPayload();
   const json = JSON.stringify(payload, null, 2);
-  const dateStr = new Date().toISOString().slice(0, 10);
-  downloadFile(json, `creator-evidence-kit-${dateStr}.json`, "application/json");
+  const filename = buildExportFilename("json");
+  downloadFile(json, filename, "application/json");
   markSaved();
-  showToast("JSON exported.");
+  showToast(`JSON exported: ${filename}`);
 }
 
 function exportCsv() {
@@ -1722,9 +2093,9 @@ function exportCsv() {
       (work.evidence || []).length, cats];
     rows.push(row.map(cell => escapeForCsv(cell)).join(","));
   });
-  const dateStr = new Date().toISOString().slice(0, 10);
-  downloadFile("\uFEFF" + rows.join("\n"), `creator-evidence-kit-${dateStr}.csv`, "text/csv;charset=utf-8");
-  showToast("CSV exported.");
+  const filename = buildExportFilename("csv");
+  downloadFile("\uFEFF" + rows.join("\n"), filename, "text/csv;charset=utf-8");
+  showToast(`CSV exported: ${filename}`);
 }
 
 /* ---------- Print ---------- */
@@ -1863,14 +2234,13 @@ function handleImportFile(file) {
         showToast(`Imported: ${added} added, ${skipped} skipped`);
       }
 
-      // Autofill creator from imported works (most common creator becomes the default).
       const detected = detectDefaultCreatorFromWorks(works);
       if (detected) {
         updateDefaultCreator(detected);
         const creatorInput = $("workCreator");
-        if (creatorInput && !creatorInput.value.trim()) creatorInput.value = detected;
+        if (creatorInput) creatorInput.value = detected;
         const batchCreator = $("batchCreator");
-        if (batchCreator && !batchCreator.value.trim()) batchCreator.value = detected;
+        if (batchCreator) batchCreator.value = detected;
       }
 
       markUnsaved();
@@ -1880,7 +2250,8 @@ function handleImportFile(file) {
 
       if (statusEl) {
         statusEl.className = "import-status success";
-        statusEl.textContent = `Successfully imported ${incomingCount} work${incomingCount === 1 ? "" : "s"} (${mode}). Image previews are shown on each record.`;
+        statusEl.textContent = `Successfully imported ${incomingCount} work${incomingCount === 1 ? "" : "s"} (${mode}). Image previews are shown on each record.` +
+          (detected ? ` Creator pre-filled as "${detected}".` : "");
       }
     } catch (err) {
       if (statusEl) { statusEl.className = "import-status error"; statusEl.textContent = `Import failed: ${err.message} Your existing collection is unchanged.`; }
@@ -1941,6 +2312,97 @@ function loadSampleRecords() {
   renderCollection();
   updateSummaryBar();
   showToast("Example records loaded.");
+}
+
+/* ---------- Share menu ---------- */
+function getShareUrl() {
+  return location.origin + location.pathname;
+}
+
+function openShareMenu() {
+  const shareBtn = $("shareBtn");
+  const shareMenu = $("shareMenu");
+  if (!shareBtn || !shareMenu) return;
+  const url = getShareUrl();
+  const title = document.title || "Creator Evidence Kit";
+  const text = `Creator Evidence Kit — ${url}`;
+
+  const setHref = (sel, href) => {
+    const el = shareMenu.querySelector(sel);
+    if (el) el.href = href;
+  };
+  setHref('[data-share="linkedin"]', `https://www.linkedin.com/sharing/share-offsite/?url=${encodeURIComponent(url)}`);
+  setHref('[data-share="twitter"]', `https://twitter.com/intent/tweet?text=${encodeURIComponent(title)}&url=${encodeURIComponent(url)}`);
+  setHref('[data-share="bluesky"]', `https://bsky.app/intent/compose?text=${encodeURIComponent(text)}`);
+  setHref('[data-share="facebook"]', `https://www.facebook.com/sharer/sharer.php?u=${encodeURIComponent(url)}`);
+  setHref('[data-share="email"]', `mailto:?subject=${encodeURIComponent(title)}&body=${encodeURIComponent(url)}`);
+
+  shareMenu.hidden = false;
+  shareBtn.setAttribute("aria-expanded", "true");
+}
+
+function closeShareMenu() {
+  const shareBtn = $("shareBtn");
+  const shareMenu = $("shareMenu");
+  if (shareBtn) shareBtn.setAttribute("aria-expanded", "false");
+  if (shareMenu) shareMenu.hidden = true;
+}
+
+async function copyAppLink() {
+  const url = getShareUrl();
+  let copied = false;
+  try {
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+      await navigator.clipboard.writeText(url);
+      copied = true;
+    }
+  } catch {}
+  if (!copied) {
+    try {
+      const helper = document.createElement("textarea");
+      helper.value = url;
+      helper.style.position = "fixed";
+      helper.style.opacity = "0";
+      document.body.appendChild(helper);
+      helper.select();
+      copied = document.execCommand("copy");
+      helper.remove();
+    } catch {}
+  }
+  if (copied) showToast("Link copied to clipboard");
+  else showToast("Could not copy. Your browser blocked clipboard access.");
+}
+
+function wireShareMenu() {
+  const shareBtn = $("shareBtn");
+  const shareMenu = $("shareMenu");
+  if (!shareBtn || !shareMenu) return;
+
+  shareBtn.addEventListener("click", (e) => {
+    e.stopPropagation();
+    const isOpen = shareBtn.getAttribute("aria-expanded") === "true";
+    if (isOpen) closeShareMenu();
+    else openShareMenu();
+  });
+
+  document.addEventListener("click", (e) => {
+    if (!e.target.closest(".share-wrap")) closeShareMenu();
+  });
+
+  document.addEventListener("keydown", (e) => {
+    if (e.key === "Escape") closeShareMenu();
+  });
+
+  shareMenu.querySelectorAll("[data-share]").forEach(el => {
+    el.addEventListener("click", async (e) => {
+      const type = el.dataset.share;
+      if (type === "copy") {
+        e.preventDefault();
+        await copyAppLink();
+        closeShareMenu();
+      }
+    });
+  });
 }
 
 /* ---------- Event wiring ---------- */
@@ -2089,8 +2551,29 @@ function initEventListeners() {
       title: suggestGroupTitle(files),
       files
     }];
+    if (batchState.selectedFileIds) batchState.selectedFileIds.clear();
     renderBatchGroups();
     batchMergeAllBtn.hidden = true;
+  });
+
+  const batchExtractBtn = $("batchExtractBtn");
+  if (batchExtractBtn) batchExtractBtn.addEventListener("click", extractSelectedToNewGroup);
+  const batchMoveInto = $("batchMoveInto");
+  if (batchMoveInto) {
+    batchMoveInto.addEventListener("change", (e) => {
+      const groupId = e.target.value;
+      if (groupId) {
+        moveSelectedInto(groupId);
+        e.target.value = "";
+      }
+    });
+  }
+  const batchRemoveSelectedBtn = $("batchRemoveSelectedBtn");
+  if (batchRemoveSelectedBtn) batchRemoveSelectedBtn.addEventListener("click", removeSelectedFiles);
+  const batchClearSelBtn = $("batchClearSelBtn");
+  if (batchClearSelBtn) batchClearSelBtn.addEventListener("click", () => {
+    if (batchState && batchState.selectedFileIds) batchState.selectedFileIds.clear();
+    renderBatchGroups();
   });
 
   const loadSamplesBtn = $("loadSamplesBtn");
@@ -2122,6 +2605,8 @@ function initEventListeners() {
       urlInput.removeAttribute("aria-invalid");
     }
   });
+
+  wireShareMenu();
 }
 
 /* ---------- Boot ---------- */
@@ -2156,7 +2641,7 @@ function start() {
     if (notice) notice.hidden = false;
     if (noticeText) noticeText.textContent = "Note: Fingerprinting is unavailable here (needs HTTPS or localhost). You can still record work details without fingerprints.";
   }
-  if (typeof window.exifr === "undefined - app.js:2159") console.warn("exifr library not loaded. Metadata auto-fill will be limited.");
+  if (typeof window.exifr === "undefined - app.js:2644") console.warn("exifr library not loaded. Metadata auto-fill will be limited.");
 }
 
 start();
