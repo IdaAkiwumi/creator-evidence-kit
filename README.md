@@ -29,6 +29,38 @@ uploaded.
 - Exports a lossless JSON file you can reopen later, a CSV summary for spreadsheets,
   and a print-friendly report.
 - Works entirely offline after the page loads. No accounts, no backend, no tracking.
+
+## What this tool does (additions)
+
+- Change: AI licensing preference defaults to "Not available for AI licensing"
+  (previously "Undecided").
+- Change: after you import a JSON file, the creator/rights holder name from your
+  imported works is remembered. New works pre-fill with that name so you don't
+  retype it each time.
+- Batch mode: upload many files at once. Files that share the leading part of
+  their filename group together automatically. Files without a shared filename
+  also group by a small perceptual hash of their preview image if they are
+  visually near-duplicates. Every group becomes one work with its filename as
+  the title. Rename, split, or merge groups before you save. This is the fastest
+  way to document a large archive.
+
+## Batch mode
+
+1. Click "Batch: add many works" in the hero (or "Add many works at once" inside
+   the single-work form).
+2. Choose files. They will be processed locally and grouped.
+3. Review the groups. Rename any work by editing its title. Remove files with the
+   × button. Split a group into separate works, or merge two groups together.
+4. Enter the creator name once. Choose an AI licensing preference for these
+   works.
+5. Click "Save N works" to add them to your collection.
+
+The grouping is a starting point, not a claim about which files belong together.
+It uses filename patterns and small image hashes. Nothing is saved until you
+press "Save works". Every saved work carries its own preview and SHA-256
+fingerprint, the same as a single-work record.
+
+
 # Creator Evidence Kit
 
 **Live app:** https://idaakiwumi.github.io/creator-evidence-kit/

@@ -4,10 +4,10 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Creator Evidence Kit</title>
-  <meta name="description" content="A free tool for visual artists, photographers, illustrators, and videographers to document creative work, record licensing preferences, and organize evidence of possible AI training use. Upload your images and we'll auto-fill the details from your file's metadata.">
+  <meta name="description" content="A free tool for visual artists, photographers, illustrators, and videographers to document creative work, record licensing preferences, and organize evidence of possible AI training use.">
   <meta name="theme-color" id="metaThemeColor" content="#f4f6f9">
   <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Crect width='100' height='100' rx='20' fill='%23fde047'/%3E%3Cpath d='M30 35h40v8H30zM30 50h40v8H30zM30 65h25v8H30z' fill='%231c1917'/%3E%3C/svg%3E">
-  <link rel="stylesheet" href="styles.css?v=5">
+  <link rel="stylesheet" href="styles.css?v=7">
   <script src="vendor/exifr.js" defer></script>
 </head>
 <body>
@@ -39,11 +39,11 @@
         <h1>Creator Evidence Kit</h1>
         <p class="dek">
           Document your creative work, record your licensing preferences, and organize
-          evidence of possible AI training use. Upload your images and we'll auto-fill
-          the details from your file's metadata.
+          evidence of possible AI training use.
         </p>
         <div class="cta">
           <button class="btn primary" id="startNewWorkBtn" type="button">Start a new record</button>
+          <button class="btn" id="startBatchBtn" type="button">Batch: add many works</button>
           <button class="btn" id="loadSamplesBtn" type="button">Load example records</button>
         </div>
       </div>
@@ -57,8 +57,8 @@
           <span class="sr-only">How saving works</span>
         </button>
         <span class="info-tip" id="savingInfoTip" role="note">
-          Works stay in this tab. Export JSON to keep them; original files are not
-          included (preview thumbnails are). Evidence may also save in this browser.
+          Works stay in this tab. Export JSON to keep them. Exports include small
+          image previews but not original files. Evidence may also save in this browser.
         </span>
       </div>
       <div class="hit">
@@ -75,207 +75,238 @@
       </div>
     </section>
 
+    <div class="toolbar" role="toolbar" aria-label="Save and reopen">
+      <label class="btn small toolbar-btn" tabindex="0">
+        Import JSON
+        <input type="file" id="importFile" accept=".json,application/json" style="display:none">
+      </label>
+      <button type="button" class="btn small toolbar-btn" id="exportJsonBtn">Export JSON</button>
+      <button type="button" class="btn small toolbar-btn" id="exportCsvBtn">Export CSV</button>
+      <button type="button" class="btn small toolbar-btn" id="printReportBtn">Print report</button>
+    </div>
+    <p class="toolbar-help">
+      Import a JSON file you exported previously, or export one to reopen your collection later.
+      Previews are included; original files are not.
+    </p>
+    <div id="importStatus" class="import-status" role="status" aria-live="polite"></div>
+
     <main id="main">
-      <section id="workFormSection" aria-labelledby="formHeading">
-        <h2 id="formHeading">Add a work</h2>
+      <div class="main-grid">
+        <section class="main-col-form" id="workFormSection" aria-labelledby="formHeading">
+          <h2 id="formHeading">Add a work</h2>
 
-        <div class="calculator">
-          <form id="workForm" novalidate>
-            <h3>Your images and videos</h3>
-            <p class="help">
-              Images are processed locally and never uploaded. Metadata auto-fills
-              the form; videos get a captured frame as a preview. Each file is
-              fingerprinted, and a compressed preview is saved with the record.
-            </p>
-
-            <div class="controls">
-              <label for="workImages" class="file-label">
-                Choose files
-                <input type="file" id="workImages" name="workImages" accept="image/jpeg,image/png,image/webp,image/gif,image/tiff,image/svg+xml,video/mp4,video/webm,video/quicktime,video/x-m4v,video/ogg" multiple>
-              </label>
-            </div>
-
-            <div class="autofill-notice" id="autofillNotice" role="status" aria-live="polite" hidden>
-              <p id="autofillText"></p>
-            </div>
-
-            <div class="thumbnails-wrap" id="existingImagesWrap" hidden>
-              <p class="help">Saved files on this work. Selecting new files replaces them.</p>
-              <div id="existingImagesGrid" class="thumbnails-grid"></div>
-              <button type="button" class="btn ghost small" id="clearExistingImagesBtn">Remove saved files</button>
-            </div>
-
-            <div class="thumbnails-wrap" id="thumbnailsWrap" hidden>
-              <p class="help">Selected files. The first is the primary (fingerprinted) file. Click a thumbnail to make it primary.</p>
-              <div id="thumbnailsGrid" class="thumbnails-grid"></div>
-              <button type="button" class="btn ghost small" id="clearImagesBtn">Remove all files</button>
-            </div>
-
-            <h3>Work details</h3>
-
-            <div class="evidence-paste">
-              <label for="workDetailsPasteBox">
-                Quick fill: paste a description or publication link
-              </label>
-              <div class="paste-row">
-                <textarea id="workDetailsPasteBox" rows="2" placeholder="For example: Behind-the-scenes short film, published at https://example.com/my-film"></textarea>
-                <button type="button" class="btn" id="workDetailsPasteBtn">Fill work details</button>
-              </div>
-              <p id="workDetailsPasteStatus" class="import-status" hidden></p>
-            </div>
-
-            <div class="controls">
-              <label for="workTitle">
-                <span>Title <span class="req" aria-hidden="true">*</span></span>
-                <input type="text" id="workTitle" name="workTitle" required maxlength="200" autocomplete="off" placeholder="For example: Harbor at Dusk">
-              </label>
-              <p class="field-error" id="workTitleError" role="alert" hidden></p>
-            </div>
-
-            <div class="controls">
-              <label for="workCreator">
-                <span>Creator or rights holder <span class="req" aria-hidden="true">*</span></span>
-                <input type="text" id="workCreator" name="workCreator" required maxlength="200" autocomplete="off" placeholder="Your name or the rights holder's name">
-              </label>
-              <p class="field-error" id="workCreatorError" role="alert" hidden></p>
-            </div>
-
-            <div class="controls">
-              <label for="workDescription">
-                <span>Description (optional)</span>
-                <textarea id="workDescription" name="workDescription" maxlength="1000" placeholder="A short description of the work, or notes about where it was published."></textarea>
-              </label>
-            </div>
-
-            <div class="controls">
-              <label for="workUrl">
-                <span>Publication URL (optional)</span>
-                <input type="url" id="workUrl" name="workUrl" maxlength="500" placeholder="https://example.com/my-photo" inputmode="url">
-              </label>
-              <p class="field-error" id="workUrlError" role="alert" hidden></p>
-            </div>
-
-            <div class="controls">
-              <label for="workDate">
-                <span>Publication date (optional)</span>
-                <input type="date" id="workDate" name="workDate">
-              </label>
-            </div>
-
-            <div class="controls">
-              <label for="workLicensing">
-                <span>AI licensing preference</span>
-                <select id="workLicensing" name="workLicensing">
-                  <option value="undecided">Undecided</option>
-                  <option value="not_available">Not available for AI licensing</option>
-                  <option value="contact_me">Contact me about AI licensing</option>
-                </select>
-              </label>
-            </div>
-
-            <h3>Evidence entries (optional)</h3>
-            <p class="help">
-              Add links or notes about where your work appears. Each entry records what you observed,
-              not what this tool has verified.
-            </p>
-
-            <div class="controls evidence-tools">
-              <button type="button" class="btn" id="addEvidenceBtn">Add evidence entry</button>
-              <button type="button" class="btn ghost" id="copyEvidenceBtn">Copy evidence</button>
-              <button type="button" class="btn ghost" id="reuseEvidenceBtn">Reuse saved evidence</button>
-            </div>
-
-            <div id="evidenceReusePanel" class="reuse-panel" hidden>
-              <!-- populated by app.js -->
-            </div>
-
-            <div class="evidence-paste">
-              <label for="evidencePasteBox">
-                Quick add: paste a link, a note, or saved evidence
-              </label>
-              <div class="paste-row">
-                <textarea id="evidencePasteBox" rows="2" placeholder="For example: https://example.com/dataset — my photo appears in this index"></textarea>
-                <button type="button" class="btn" id="evidencePasteBtn">Save pasted evidence</button>
-              </div>
+          <div class="calculator">
+            <form id="workForm" novalidate>
+              <h3>Your images and videos</h3>
               <p class="help">
-                Pasting plain text creates an entry you can edit: a link goes into Source URL and the
-                text is kept in Notes. Dates are never guessed from pasted text, and nothing is
-                visited or verified.
+                Images are processed locally and never uploaded. Metadata auto-fills
+                the form; videos get a captured frame as a preview. Each file is
+                fingerprinted, and a compressed preview is saved with the record.
+                <button type="button" class="link-btn" id="startBatchInlineBtn">Add many works at once →</button>
               </p>
-              <p id="evidencePasteStatus" class="import-status" hidden></p>
-            </div>
 
-            <div id="evidenceContainer" class="evidence-container" aria-live="polite"></div>
+              <div class="controls">
+                <label for="workImages" class="file-label">
+                  Choose files
+                  <input type="file" id="workImages" name="workImages" accept="image/jpeg,image/png,image/webp,image/gif,image/tiff,image/svg+xml,video/mp4,video/webm,video/quicktime,video/x-m4v,video/ogg" multiple>
+                </label>
+              </div>
 
-            <div id="evidenceCopyFallback" class="copy-fallback" hidden>
-              <p class="help">Clipboard access was blocked. Select this text and copy it manually:</p>
-              <textarea id="evidenceCopyFallbackText" rows="6" readonly></textarea>
-              <button type="button" class="btn ghost small" id="evidenceCopyFallbackClose">Close</button>
-            </div>
+              <div class="autofill-notice" id="autofillNotice" role="status" aria-live="polite" hidden>
+                <p id="autofillText"></p>
+              </div>
 
-            <p class="storage-status" id="evidenceStorageStatus"></p>
-            <button type="button" class="btn ghost small" id="clearSavedEvidenceBtn" hidden>Clear saved evidence from this browser</button>
+              <div class="thumbnails-wrap" id="existingImagesWrap" hidden>
+                <p class="help">Saved files on this work. Selecting new files replaces them.</p>
+                <div id="existingImagesGrid" class="thumbnails-grid"></div>
+                <button type="button" class="btn ghost small" id="clearExistingImagesBtn">Remove saved files</button>
+              </div>
 
-            <div class="form-actions">
-              <button type="submit" class="btn primary" id="submitWorkBtn">Save work</button>
-              <button type="button" class="btn ghost" id="cancelEditBtn" hidden>Cancel edit</button>
-            </div>
-          </form>
-        </div>
-      </section>
+              <div class="thumbnails-wrap" id="thumbnailsWrap" hidden>
+                <p class="help">Selected files. The first is the primary (fingerprinted) file. Click a thumbnail to make it primary.</p>
+                <div id="thumbnailsGrid" class="thumbnails-grid"></div>
+                <button type="button" class="btn ghost small" id="clearImagesBtn">Remove all files</button>
+              </div>
 
-      <section id="collectionSection" aria-labelledby="collectionHeading">
-        <h2 id="collectionHeading">Your collection</h2>
-        <p class="section-dek">
-          Works you have recorded in this session. Export them before closing this tab.
-        </p>
-        <div id="collectionGrid" class="collection-grid"></div>
-        <div id="collectionEmpty" class="empty-state">
-          <p>No works added yet.</p>
-          <p class="muted">Start by uploading an image above, or load the example records to see how it works.</p>
-        </div>
-      </section>
+              <h3>Work details</h3>
 
-      <section id="exportSection" aria-labelledby="exportHeading">
-        <h2 id="exportHeading">Save and reopen</h2>
-        <p class="section-dek">
-          Export creates a file on your device. Import reads a previously exported file.
-          Your collection in this tab is replaced only when you confirm.
-        </p>
+              <div class="evidence-paste">
+                <label for="workDetailsPasteBox">
+                  Quick fill: paste a description or publication link
+                </label>
+                <div class="paste-row">
+                  <textarea id="workDetailsPasteBox" rows="2" placeholder="For example: Behind-the-scenes short film, published at https://example.com/my-film"></textarea>
+                  <button type="button" class="btn" id="workDetailsPasteBtn">Fill work details</button>
+                </div>
+                <p id="workDetailsPasteStatus" class="import-status" hidden></p>
+              </div>
 
-        <div class="export-grid">
-          <div class="calculator">
-            <h3>Export</h3>
-            <div class="controls">
-              <button type="button" class="btn primary" id="exportJsonBtn">Export JSON (reopen and edit)</button>
-              <button type="button" class="btn" id="exportCsvBtn">Export CSV (spreadsheet review)</button>
-              <button type="button" class="btn" id="printReportBtn">Print report</button>
-            </div>
-            <p class="help">
-              JSON is the full record you can reopen in this tool. It includes a
-              compressed preview of each saved file so imports show real thumbnails,
-              but not the original files. CSV is a simplified summary for reading in a
-              spreadsheet.
-            </p>
+              <div class="controls">
+                <label for="workTitle">
+                  <span>Title <span class="req" aria-hidden="true">*</span></span>
+                  <input type="text" id="workTitle" name="workTitle" required maxlength="200" autocomplete="off" placeholder="For example: Harbor at Dusk">
+                </label>
+                <p class="field-error" id="workTitleError" role="alert" hidden></p>
+              </div>
+
+              <div class="controls">
+                <label for="workCreator">
+                  <span>Creator or rights holder <span class="req" aria-hidden="true">*</span></span>
+                  <input type="text" id="workCreator" name="workCreator" required maxlength="200" autocomplete="off" placeholder="Your name or the rights holder's name">
+                </label>
+                <p class="field-error" id="workCreatorError" role="alert" hidden></p>
+              </div>
+
+              <div class="controls">
+                <label for="workDescription">
+                  <span>Description (optional)</span>
+                  <textarea id="workDescription" name="workDescription" maxlength="1000" placeholder="A short description of the work, or notes about where it was published."></textarea>
+                </label>
+              </div>
+
+              <div class="controls">
+                <label for="workUrl">
+                  <span>Publication URL (optional)</span>
+                  <input type="url" id="workUrl" name="workUrl" maxlength="500" placeholder="https://example.com/my-photo" inputmode="url">
+                </label>
+                <p class="field-error" id="workUrlError" role="alert" hidden></p>
+              </div>
+
+              <div class="controls">
+                <label for="workDate">
+                  <span>Publication date (optional)</span>
+                  <input type="date" id="workDate" name="workDate">
+                </label>
+              </div>
+
+              <div class="controls">
+                <label for="workLicensing">
+                  <span>AI licensing preference</span>
+                  <select id="workLicensing" name="workLicensing">
+                    <option value="not_available">Not available for AI licensing</option>
+                    <option value="undecided">Undecided</option>
+                    <option value="contact_me">Contact me about AI licensing</option>
+                  </select>
+                </label>
+              </div>
+
+              <h3>Evidence entries (optional)</h3>
+              <p class="help">
+                Add links or notes about where your work appears. Each entry records what you observed,
+                not what this tool has verified.
+              </p>
+
+              <div class="controls evidence-tools">
+                <button type="button" class="btn" id="addEvidenceBtn">Add evidence entry</button>
+                <button type="button" class="btn ghost" id="copyEvidenceBtn">Copy evidence</button>
+                <button type="button" class="btn ghost" id="reuseEvidenceBtn">Reuse saved evidence</button>
+              </div>
+
+              <div id="evidenceReusePanel" class="reuse-panel" hidden></div>
+
+              <div class="evidence-paste">
+                <label for="evidencePasteBox">
+                  Quick add: paste a link, a note, or saved evidence
+                </label>
+                <div class="paste-row">
+                  <textarea id="evidencePasteBox" rows="2" placeholder="For example: https://example.com/dataset — my photo appears in this index"></textarea>
+                  <button type="button" class="btn" id="evidencePasteBtn">Save pasted evidence</button>
+                </div>
+                <p class="help">
+                  Pasting plain text creates an entry you can edit: a link goes into Source URL and the
+                  text is kept in Notes. Dates are never guessed from pasted text, and nothing is
+                  visited or verified.
+                </p>
+                <p id="evidencePasteStatus" class="import-status" hidden></p>
+              </div>
+
+              <div id="evidenceContainer" class="evidence-container" aria-live="polite"></div>
+
+              <div id="evidenceCopyFallback" class="copy-fallback" hidden>
+                <p class="help">Clipboard access was blocked. Select this text and copy it manually:</p>
+                <textarea id="evidenceCopyFallbackText" rows="6" readonly></textarea>
+                <button type="button" class="btn ghost small" id="evidenceCopyFallbackClose">Close</button>
+              </div>
+
+              <p class="storage-status" id="evidenceStorageStatus"></p>
+              <button type="button" class="btn ghost small" id="clearSavedEvidenceBtn" hidden>Clear saved evidence from this browser</button>
+
+              <div class="form-actions">
+                <button type="submit" class="btn primary" id="submitWorkBtn">Save work</button>
+                <button type="button" class="btn ghost" id="cancelEditBtn" hidden>Cancel edit</button>
+                <span class="form-hint">Tip: Ctrl/Cmd + Enter to save</span>
+              </div>
+            </form>
+          </div>
+        </section>
+
+        <section class="main-col-form" id="batchSection" aria-labelledby="batchHeading" hidden>
+          <div class="batch-header">
+            <h2 id="batchHeading">Batch add works</h2>
+            <button type="button" class="btn ghost small" id="batchCancelBtn">Exit batch</button>
           </div>
 
           <div class="calculator">
-            <h3>Import</h3>
             <div class="controls">
-              <label for="importFile" class="file-label">
-                <span>Choose a JSON file</span>
-                <input type="file" id="importFile" accept=".json,application/json">
+              <label for="batchImages" class="file-label">
+                Choose files
+                <input type="file" id="batchImages" accept="image/jpeg,image/png,image/webp,image/gif,image/tiff,image/svg+xml,video/mp4,video/webm,video/quicktime,video/x-m4v,video/ogg" multiple>
               </label>
+              <button type="button" class="btn ghost small" id="batchMergeAllBtn" hidden>Merge all into one work</button>
             </div>
             <p class="help">
-              Select a JSON file you previously exported. You will be asked whether to
-              replace your current collection or merge into it. Image previews are
-              restored from the file.
+              Files are grouped by filename pattern and visual similarity.
+              Every group becomes one work. Rename, split, or merge groups before saving.
+              Each work's title defaults to its filename.
             </p>
-            <div id="importStatus" class="import-status" role="status" aria-live="polite"></div>
+
+            <div class="autofill-notice" id="batchProgress" role="status" aria-live="polite" hidden>
+              <p id="batchProgressText"></p>
+            </div>
+
+            <div id="batchSettings" hidden>
+              <div class="controls">
+                <label for="batchCreator">
+                  <span>Creator for these works <span class="req" aria-hidden="true">*</span></span>
+                  <input type="text" id="batchCreator" required maxlength="200" placeholder="Your name or the rights holder's name">
+                </label>
+                <label for="batchLicensing">
+                  <span>AI licensing preference for these works</span>
+                  <select id="batchLicensing">
+                    <option value="not_available">Not available for AI licensing</option>
+                    <option value="undecided">Undecided</option>
+                    <option value="contact_me">Contact me about AI licensing</option>
+                  </select>
+                </label>
+              </div>
+            </div>
+
+            <div id="batchGroups" class="batch-groups"></div>
+
+            <div class="form-actions" id="batchActions" hidden>
+              <button type="button" class="btn primary" id="batchSaveBtn" disabled>Save works</button>
+              <button type="button" class="btn ghost" id="batchCancelBtn2">Cancel</button>
+              <span class="form-hint" id="batchSaveHint"></span>
+            </div>
           </div>
-        </div>
-      </section>
+        </section>
+
+        <aside class="main-col-collection" aria-labelledby="collectionHeading">
+          <div class="collection-panel">
+            <div class="collection-header">
+              <h2 id="collectionHeading">Your collection</h2>
+              <p class="section-dek">Works you have recorded in this session. Export JSON before closing this tab.</p>
+            </div>
+            <div class="collection-scroll">
+              <div id="collectionGrid" class="collection-grid"></div>
+              <div id="collectionEmpty" class="empty-state">
+                <p>No works added yet.</p>
+                <p class="muted">Add your first work with the form, or load the example records to see how it works.</p>
+              </div>
+            </div>
+          </div>
+        </aside>
+      </div>
 
       <section id="aboutSection" aria-labelledby="aboutHeading">
         <h2 id="aboutHeading">About this tool</h2>
@@ -306,6 +337,22 @@
           <p>
             These categories describe what you recorded, not what this tool verified.
             A user-entered company acknowledgment is not the same as a verified company statement.
+          </p>
+        </details>
+
+        <details class="method">
+          <summary>How batch grouping works</summary>
+          <p>
+            When you add many files at once, the tool groups them by the leading part of the
+            filename (for example, <code>sunset_01.jpg</code> and <code>sunset_02.jpg</code> both
+            stem to "sunset"), and by a small perceptual hash of each preview image to catch
+            near-duplicates. Groups become works. Every group title defaults to its filename and
+            can be renamed. Groups can be split or merged before saving.
+          </p>
+          <p>
+            Grouping is a starting point, not a claim about which files belong together.
+            Review the groups and adjust them before you save. Nothing is stored until you
+            press "Save works".
           </p>
         </details>
 
@@ -406,6 +453,6 @@
 
   <div id="printReport" class="print-report" aria-hidden="true"></div>
 
-  <script src="app.js?v=5"></script>
+  <script src="app.js?v=7"></script>
 </body>
 </html>
