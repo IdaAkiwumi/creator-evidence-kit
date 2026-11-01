@@ -4,6 +4,7 @@
 
 [![GitHub Sponsors](https://img.shields.io/badge/GitHub-Sponsor-ea4aaa?logo=githubsponsors&logoColor=white)](https://github.com/sponsors/IdaAkiwumi)
 [![PayPal](https://img.shields.io/badge/PayPal-Donate-00457C?logo=paypal&logoColor=white)](https://www.paypal.com/paypalme/iakiwumi)
+
 [![Vanilla JS](https://img.shields.io/badge/Vanilla_JS-ES6+-F7DF1E?logo=javascript&logoColor=black)](https://developer.mozilla.org/en-US/docs/Web/JavaScript)
 [![SHA256](https://img.shields.io/badge/SHA256-Fingerprinting-1e40af)](https://developer.mozilla.org/en-US/docs/Web/API/SubtleCrypto/digest)
 [![Privacy Local Only](https://img.shields.io/badge/Privacy-Local_Only-22c55e)](#privacy)
